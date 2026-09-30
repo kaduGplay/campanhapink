@@ -1,0 +1,10 @@
+.env
+.env.*
+.data
+.git
+.vercel
+node_modules
+dist
+tests
+README.md
+VERCEL.md

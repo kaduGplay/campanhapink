@@ -1,0 +1,1345 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <script>
+    // Prévia estática e arquivo local não executam as rotas Node de pagamento.
+    // O servidor injeta esta marca antes do script, inclusive quando usa outra porta.
+    if (!document.querySelector('meta[name="pink-runtime"]') &&
+        (location.protocol === 'file:' || ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname))) {
+      const source = new URLSearchParams(location.search);
+      const query = new URLSearchParams();
+      for (const key of ['kit', 'pedido']) if (source.has(key)) query.set(key, source.get(key));
+      location.replace('http://127.0.0.1:58327/checkout.html' + (query.size ? '?' + query : ''));
+    }
+  </script>
+  <meta charset="UTF-8">
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Checkout</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="fonts/inter.css" rel="stylesheet">
+  <style>
+    :root {
+      --pink: #FF1493;
+      --pink-dark: #d4107a;
+      --text: #1f1f1f;
+      --text-2: #5c5c5c;
+      --muted: #8a8a8a;
+      --border: #dcdcdc;
+      --border-light: #ececec;
+      --bg: #f5f5f5;
+      --field-bg: #fafafa;
+      --ok: #1b8a4b;
+      --ok-bg: #edf7f1;
+      --err: #c62828;
+      --warn-bg: #fff8db;
+      --warn-border: #f1d46b;
+      --warn-text: #6b5300;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Header */
+    .checkout-header {
+      background: var(--pink);
+      height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      padding: 0 16px;
+    }
+    .checkout-header img { height: 40px; max-width: 55%; object-fit: contain; }
+    .secure {
+      position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+      display: flex; align-items: center; gap: 6px;
+      color: #fff; font-size: 12px; font-weight: 500; opacity: .95;
+    }
+    .secure svg { width: 14px; height: 14px; }
+    @media (max-width: 480px) { .secure span { display: none; } }
+
+    .container { max-width: 580px; margin: 0 auto; padding: 24px 16px 40px; }
+
+    /* Banners (carrossel automático) */
+    .banners {
+      position: relative; aspect-ratio: 1024 / 340; margin-bottom: 20px;
+      border-radius: 6px; overflow: hidden; background: var(--border-light);
+    }
+    .banners img {
+      position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block;
+      opacity: 0; filter: blur(3px); transform: scale(1.02);
+      transition: opacity .8s ease, filter .8s ease, transform 1.2s ease;
+    }
+    .banners img.active { opacity: 1; filter: blur(0); transform: scale(1); }
+    .banner-dots {
+      position: absolute; left: 0; right: 0; bottom: 8px;
+      display: flex; justify-content: center; gap: 6px;
+    }
+    .banner-dots button {
+      width: 6px; height: 6px; padding: 0; border: none; border-radius: 3px; cursor: pointer;
+      background: rgba(255,255,255,.55); transition: width .3s, background .3s;
+    }
+    .banner-dots button.active { width: 18px; background: #fff; }
+    @media (prefers-reduced-motion: reduce) {
+      .banners img { transition: opacity .3s; filter: none; transform: none; }
+    }
+
+    /* Stepper */
+    .steps { display: flex; gap: 6px; margin-bottom: 24px; }
+    .step { flex: 1; }
+    .step .bar { height: 3px; background: var(--border); border-radius: 2px; transition: background .2s; }
+    .step .label { display: block; margin-top: 8px; font-size: 12px; font-weight: 500; color: var(--muted); }
+    .step.active .bar, .step.done .bar { background: var(--pink); }
+    .step.active .label { color: var(--text); font-weight: 600; }
+    .step.done .label { color: var(--text-2); }
+
+    /* Blocos */
+    .block {
+      background: #fff;
+      border: 1px solid var(--border-light);
+      border-radius: 6px;
+      padding: 24px 20px;
+      margin-bottom: 16px;
+    }
+    .block-title { font-size: 16px; font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 10px; }
+    .block-title .num {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--text); color: #fff; font-size: 12px; font-weight: 600;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .block-sub { font-size: 13px; color: var(--text-2); margin-bottom: 20px; }
+    .section-label { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* Campos */
+    .field { margin-bottom: 16px; }
+    .field label { display: block; font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 6px; }
+    .field label .opt { font-weight: 400; color: var(--muted); }
+    .field input, .field select {
+      width: 100%; height: 46px; padding: 0 12px; font-size: 15px; font-family: inherit; color: var(--text);
+      border: 1px solid var(--border); border-radius: 4px; outline: none; background: #fff;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .field select { padding: 0 10px; }
+    .field input:focus, .field select:focus { border-color: var(--text); box-shadow: 0 0 0 3px rgba(0,0,0,.06); }
+    .field input[readonly] { background: var(--field-bg); color: var(--text-2); }
+    .field input.invalid { border-color: var(--err); }
+    .field .hint { font-size: 12px; margin-top: 6px; color: var(--muted); }
+    .field .hint:empty { display: none; }
+    .field .hint.err { color: var(--err); }
+    .field .hint.ok { color: var(--ok); }
+    .row { display: flex; gap: 12px; }
+    .row .field { flex: 1; min-width: 0; }
+    .row .field.sm { flex: 0 0 32%; }
+
+    .input-wrap { position: relative; }
+    .spinner {
+      display: none; position: absolute; right: 12px; top: 50%; margin-top: -8px;
+      width: 16px; height: 16px; border: 2px solid var(--border);
+      border-top-color: var(--text); border-radius: 50%; animation: spin .7s linear infinite;
+    }
+    .spinner.show { display: block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .cep-row { display: flex; align-items: flex-start; gap: 12px; }
+    .cep-row .field { flex: 0 0 55%; margin-bottom: 0; }
+    .cep-link { font-size: 13px; color: var(--text-2); text-decoration: underline; margin-top: 36px; white-space: nowrap; }
+
+    .cep-search {
+      display: none; margin-top: 16px; padding: 16px;
+      background: var(--field-bg); border: 1px solid var(--border-light); border-radius: 4px;
+    }
+    .cep-search.show { display: block; }
+    .search-title { font-size: 13px; font-weight: 600; margin-bottom: 14px; }
+    .cep-search .btn { height: 44px; font-size: 14px; }
+    .search-results { margin-top: 12px; max-height: 280px; overflow-y: auto; }
+    .search-results:empty { display: none; }
+    .search-item {
+      display: block; width: 100%; text-align: left; background: #fff; font-family: inherit;
+      border: 1px solid var(--border-light); border-radius: 4px; padding: 10px 12px;
+      margin-bottom: 6px; cursor: pointer; transition: border-color .15s;
+    }
+    .search-item:hover { border-color: var(--text); }
+    .search-item b { display: block; font-size: 13px; font-weight: 600; color: var(--text); }
+    .search-item span { font-size: 12px; color: var(--text-2); }
+    .search-msg { font-size: 13px; color: var(--text-2); }
+    .search-msg.err { color: var(--err); }
+
+    .reveal { display: none; margin-top: 16px; padding-top: 20px; border-top: 1px solid var(--border-light); }
+    .reveal.show { display: block; }
+    .cpf-nome { display: none; margin: -6px 0 16px; font-size: 13px; color: var(--text-2); }
+    .cpf-nome.show { display: block; }
+    .cpf-nome b { color: var(--text); font-weight: 600; }
+
+    /* Opções de frete */
+    .ship-option {
+      display: flex; align-items: center; gap: 12px; cursor: pointer;
+      border: 1px solid var(--border); border-radius: 4px; padding: 14px 16px; margin-bottom: 8px;
+      transition: border-color .15s;
+    }
+    .ship-option:hover { border-color: var(--text-2); }
+    .ship-option input { position: absolute; opacity: 0; pointer-events: none; }
+    .ship-option .radio {
+      width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--border); flex-shrink: 0;
+      transition: border .15s;
+    }
+    .ship-option .txt { flex: 1; }
+    .ship-option .txt b { display: block; font-size: 14px; font-weight: 600; }
+    .ship-option .txt small { font-size: 12px; color: var(--text-2); }
+    .ship-option .price { font-weight: 600; font-size: 14px; white-space: nowrap; }
+    .ship-option .price.free { color: var(--ok); }
+    .ship-option.selected { border-color: var(--text); }
+    .ship-option.selected .radio { border: 5px solid var(--text); }
+    .ship-error { font-size: 12px; color: var(--err); margin-top: 4px; }
+    .ship-error:empty { display: none; }
+
+    /* Botões */
+    .actions { margin-top: 24px; }
+    .btn {
+      width: 100%; height: 50px; font-size: 15px; font-weight: 600; font-family: inherit;
+      border: none; border-radius: 4px; cursor: pointer; transition: background .15s;
+      background: var(--pink); color: #fff;
+    }
+    .btn:hover { background: var(--pink-dark); }
+    .btn:disabled { opacity: .6; cursor: not-allowed; }
+    .btn-outline { background: #fff; color: var(--text); border: 1px solid var(--border); }
+    .btn-outline:hover { background: var(--field-bg); }
+    .btn-back {
+      display: block; margin: 14px auto 0; background: none; border: none;
+      color: var(--text-2); font-size: 13px; font-family: inherit; cursor: pointer;
+    }
+    .btn-back:hover { color: var(--text); text-decoration: underline; }
+
+    /* Resumo */
+    .summary-title { font-size: 13px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
+    .summary-item { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; color: var(--text-2); }
+    .summary-item.product { color: var(--text); font-weight: 500; }
+    .summary-item.total {
+      border-top: 1px solid var(--border-light); margin-top: 10px; padding-top: 14px;
+      font-weight: 700; font-size: 16px; color: var(--text);
+    }
+    .free { color: var(--ok); font-weight: 500; }
+
+    /* Revisão */
+    .review { border: 1px solid var(--border-light); border-radius: 4px; margin-bottom: 20px; }
+    .review-item { padding: 14px 16px; display: flex; justify-content: space-between; gap: 12px; }
+    .review-item + .review-item { border-top: 1px solid var(--border-light); }
+    .review-item h4 { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+    .review-item p { font-size: 13px; color: var(--text); }
+    .review-item button {
+      background: none; border: none; color: var(--text-2); font-size: 13px; font-family: inherit;
+      text-decoration: underline; cursor: pointer; align-self: flex-start;
+    }
+
+    /* Forma de pagamento */
+    .pay-method { display: flex; align-items: center; gap: 14px; border: 1px solid var(--text); border-radius: 4px; padding: 16px; }
+    .pay-method .radio { width: 18px; height: 18px; border-radius: 50%; border: 5px solid var(--text); flex-shrink: 0; }
+    .pay-method .txt { flex: 1; }
+    .pay-method .txt b { display: block; font-size: 14px; font-weight: 600; }
+    .pay-method .txt small { color: var(--text-2); font-size: 12px; }
+    .pay-method svg { width: 28px; height: 28px; flex-shrink: 0; }
+    .pay-note { font-size: 12px; color: var(--text-2); margin-top: 12px; }
+
+    /* Order bumps */
+    .bumps { margin-bottom: 20px; }
+    .bumps-title { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+    .bumps-sub { font-size: 12px; color: var(--text-2); margin-bottom: 12px; }
+    .bump {
+      display: flex; align-items: center; gap: 12px; position: relative;
+      border: 1.5px dashed var(--pink); border-radius: 6px; padding: 12px; margin-bottom: 8px;
+      background: #fff7fb; transition: background .15s, border-color .15s;
+    }
+    .bump input { position: absolute; opacity: 0; pointer-events: none; }
+    .bump .check {
+      width: 20px; height: 20px; border-radius: 4px; border: 1.5px solid var(--border); background: #fff;
+      flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: all .15s;
+    }
+    .bump .check svg { width: 12px; height: 12px; opacity: 0; transition: opacity .15s; }
+    .bump img { width: 56px; height: 56px; object-fit: contain; border-radius: 4px; background: #fff; flex-shrink: 0; }
+    .bump .txt { flex: 1; min-width: 0; }
+    .bump .txt b { display: block; font-size: 13px; font-weight: 600; line-height: 1.3; }
+    .bump .txt small { font-size: 12px; color: var(--pink-dark); font-weight: 600; }
+    .bump-main { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; cursor: pointer; }
+    .bump-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+    .bump .price { font-size: 14px; font-weight: 700; white-space: nowrap; }
+    .qty {
+      display: none; align-items: center; height: 28px;
+      border: 1px solid var(--border); border-radius: 4px; background: #fff; overflow: hidden;
+    }
+    .qty button {
+      width: 28px; height: 100%; border: none; background: none; cursor: pointer;
+      font-size: 16px; font-family: inherit; color: var(--text); line-height: 1;
+    }
+    .qty button:hover { background: var(--field-bg); }
+    .qty button:disabled { color: var(--border); cursor: not-allowed; background: none; }
+    .qty span { min-width: 22px; text-align: center; font-size: 13px; font-weight: 600; }
+    .bump.selected .qty { display: flex; }
+    .bump.selected { border-style: solid; background: #ffeef7; }
+    .bump.selected .check { background: var(--pink); border-color: var(--pink); }
+    .bump.selected .check svg { opacity: 1; }
+    .pay-error {
+      display: none; margin-top: 16px; padding: 12px 14px; border-radius: 4px;
+      background: #fdecea; color: var(--err); font-size: 13px;
+    }
+    .pay-error.show { display: block; }
+
+    /* Resultado Pix */
+    .pix-result { display: none; }
+    .pix-result.show { display: block; }
+    .pix-head { text-align: center; margin-bottom: 16px; }
+    .pix-head h3 { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
+    .pix-head p { font-size: 13px; color: var(--text-2); }
+    .pix-head .amount { font-size: 22px; font-weight: 700; color: var(--text); margin-top: 8px; }
+
+    .notice {
+      display: flex; gap: 12px; text-align: left;
+      background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 4px;
+      padding: 14px; margin-bottom: 20px; color: var(--warn-text); font-size: 13px; line-height: 1.5;
+    }
+    .notice svg { width: 20px; height: 20px; flex-shrink: 0; margin-top: 1px; }
+    .notice b { color: #4a3900; }
+    .notice p + p { margin-top: 6px; }
+
+    .qr-box {
+      width: 216px; height: 216px; margin: 0 auto 16px; padding: 8px; background: #fff;
+      border: 1px solid var(--border-light); border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .qr-box img, .qr-box canvas { width: 200px !important; height: 200px !important; display: block; }
+    .code-label { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+    .pix-code {
+      width: 100%; font-size: 12px; font-family: ui-monospace, Menlo, monospace; padding: 12px;
+      border: 1px solid var(--border); border-radius: 4px; background: var(--field-bg);
+      word-break: break-all; resize: none; color: var(--text-2); margin-bottom: 12px;
+    }
+    .timer { font-size: 12px; color: var(--text-2); margin-top: 12px; text-align: center; }
+    .timer b { color: var(--text); font-weight: 600; }
+
+    .how-to { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-light); }
+    .how-to h4 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+    .how-to ol { padding-left: 18px; font-size: 13px; color: var(--text-2); line-height: 1.8; }
+
+    /* Verificação de pagamento */
+    .verify { display: flex; align-items: center; gap: 14px; }
+    .verify .icon { width: 36px; height: 36px; flex-shrink: 0; position: relative; }
+    .verify .icon .ring {
+      width: 36px; height: 36px; border-radius: 50%;
+      border: 3px solid var(--border-light); border-top-color: var(--pink); animation: spin 1s linear infinite;
+    }
+    .verify .icon svg { width: 36px; height: 36px; display: none; }
+    .verify h4 { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+    .verify p { font-size: 13px; color: var(--text-2); }
+    .verify-block.paid { border-color: #bfe3cc; background: var(--ok-bg); }
+    .verify-block.paid .ring, .verify-block.failed .ring { display: none; }
+    .verify-block.paid .icon-ok { display: block; }
+    .verify-block.failed .icon-fail { display: block; }
+
+    /* Página de obrigado */
+    .obrigado { display: none; }
+    body.pedido-pago .obrigado { display: block; }
+    body.pedido-pago .banners, body.pedido-pago .steps, body.pedido-pago #summaryBlock,
+    body.pedido-pago .panel, body.pedido-pago #verifyBlock { display: none !important; }
+
+    .ty-head { text-align: center; padding: 8px 0 4px; }
+    .ty-check {
+      width: 56px; height: 56px; margin: 0 auto 14px; border-radius: 50%;
+      background: var(--ok-bg); display: flex; align-items: center; justify-content: center;
+    }
+    .ty-check svg { width: 30px; height: 30px; }
+    .ty-head h2 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+    .ty-head p { font-size: 13px; color: var(--text-2); }
+    .ty-head .order-id { margin-top: 10px; font-size: 12px; color: var(--muted); }
+
+    .countdown { text-align: center; }
+    .countdown .label { font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
+    .countdown .big { font-size: 34px; font-weight: 700; color: var(--pink); line-height: 1.1; }
+    .countdown .clock {
+      display: inline-flex; gap: 6px; margin-top: 12px; font-variant-numeric: tabular-nums;
+    }
+    .countdown .clock span {
+      min-width: 52px; padding: 8px 6px; border-radius: 6px; background: var(--field-bg);
+      border: 1px solid var(--border-light); font-size: 18px; font-weight: 700;
+    }
+    .countdown .clock small { display: block; font-size: 10px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .countdown .eta { margin-top: 14px; font-size: 13px; color: var(--text-2); }
+    .countdown .eta b { color: var(--text); }
+
+    .timeline { list-style: none; margin-top: 4px; }
+    .timeline li { position: relative; display: flex; gap: 12px; padding-bottom: 18px; }
+    .timeline li:last-child { padding-bottom: 0; }
+    .timeline li::before {
+      content: ""; position: absolute; left: 10px; top: 22px; bottom: 0; width: 2px; background: var(--border-light);
+    }
+    .timeline li:last-child::before { display: none; }
+    .timeline li.done::before { background: var(--pink); }
+    .timeline .dot {
+      width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; position: relative; z-index: 1;
+      border: 2px solid var(--border); background: #fff; display: flex; align-items: center; justify-content: center;
+    }
+    .timeline .dot svg { width: 12px; height: 12px; display: none; }
+    .timeline li.done .dot { background: var(--pink); border-color: var(--pink); }
+    .timeline li.done .dot svg { display: block; }
+    .timeline li.current .dot { border-color: var(--pink); }
+    .timeline li.current .dot::after {
+      content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--pink);
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse { 50% { transform: scale(1.6); opacity: .4; } }
+    .timeline b { display: block; font-size: 14px; font-weight: 600; }
+    .timeline li:not(.done):not(.current) b { color: var(--muted); font-weight: 500; }
+    .timeline small { font-size: 12px; color: var(--text-2); }
+
+    .map-embed {
+      position: relative; margin-top: 14px; min-height: 200px; border-radius: 6px; overflow: hidden;
+      border: 1px solid var(--border-light); background: var(--field-bg);
+    }
+    .map-embed iframe { display: block; width: 100%; height: 100%; min-height: 200px; border: 0; }
+    /* Skeleton enquanto o mapa carrega (mesma altura do mapa) */
+    .map-embed.loading::after {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(90deg, var(--field-bg) 25%, var(--border-light) 50%, var(--field-bg) 75%);
+      background-size: 200% 100%; animation: shimmer 1.3s linear infinite;
+    }
+    .map-embed.loading iframe { opacity: 0; }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+    .map-link { display: inline-block; margin-top: 10px; font-size: 13px; color: var(--text-2); text-decoration: underline; }
+    .ty-address { font-size: 14px; line-height: 1.55; }
+    .ty-address b { font-weight: 600; }
+
+    /* Rodapé */
+    .footer {
+      border-top: 1px solid var(--border-light); background: #fff;
+      text-align: center; font-size: 12px; color: var(--muted); padding: 20px 16px;
+    }
+    .footer .seals { display: flex; justify-content: center; align-items: center; gap: 6px; margin-bottom: 6px; color: var(--text-2); font-weight: 500; }
+    .footer .seals svg { width: 13px; height: 13px; }
+  </style>
+</head>
+<body>
+
+  <header class="checkout-header">
+    <img src="parte 1/images/logo2.png" alt="Logo">
+    <div class="secure">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      <span>Compra segura</span>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <div class="banners" id="banners">
+      <img src="banners checkout/banner1.png" alt="" class="active">
+      <img src="banners checkout/banner2.png" alt="" loading="lazy">
+      <img src="banners checkout/banner3.png" alt="" loading="lazy">
+      <div class="banner-dots" id="bannerDots"></div>
+    </div>
+
+    <div class="steps">
+      <div class="step active" data-step="1"><div class="bar"></div><span class="label">Entrega</span></div>
+      <div class="step" data-step="2"><div class="bar"></div><span class="label">Dados pessoais</span></div>
+      <div class="step" data-step="3"><div class="bar"></div><span class="label">Pagamento</span></div>
+    </div>
+
+    <div class="block" id="summaryBlock">
+      <div class="summary-title">Resumo do pedido</div>
+      <div id="summary"></div>
+    </div>
+
+    <!-- ETAPA 1: ENTREGA -->
+    <section class="block panel active" id="step-1">
+      <h2 class="block-title"><span class="num">1</span>Endereço de entrega</h2>
+      <p class="block-sub">Informe o CEP para preenchermos o endereço automaticamente.</p>
+
+      <div class="cep-row">
+        <div class="field">
+          <label for="cep">CEP</label>
+          <div class="input-wrap">
+            <input type="tel" id="cep" placeholder="00000-000" maxlength="9" inputmode="numeric" autocomplete="postal-code">
+            <span class="spinner" id="cepSpinner"></span>
+          </div>
+          <div class="hint"></div>
+        </div>
+        <a class="cep-link" href="#" id="cepLink">Não sei meu CEP</a>
+      </div>
+
+      <div class="cep-search" id="cepSearch">
+        <p class="search-title">Buscar CEP pelo endereço</p>
+        <div class="row">
+          <div class="field sm">
+            <label for="buscaUf">Estado</label>
+            <select id="buscaUf"></select>
+          </div>
+          <div class="field">
+            <label for="buscaCidade">Cidade</label>
+            <input type="text" id="buscaCidade" placeholder="Ex.: São Paulo">
+          </div>
+        </div>
+        <div class="field">
+          <label for="buscaRua">Rua</label>
+          <input type="text" id="buscaRua" placeholder="Ex.: Avenida Paulista">
+        </div>
+        <button type="button" class="btn btn-outline" id="btnBuscaEndereco">Buscar</button>
+        <div class="search-results" id="buscaResultados"></div>
+      </div>
+
+      <div class="reveal" id="addressFields">
+        <div class="field">
+          <label for="rua">Endereço</label>
+          <input type="text" id="rua" autocomplete="address-line1">
+        </div>
+        <div class="row">
+          <div class="field sm">
+            <label for="numero">Número</label>
+            <input type="tel" id="numero" inputmode="numeric">
+          </div>
+          <div class="field">
+            <label for="complemento">Complemento <span class="opt">(opcional)</span></label>
+            <input type="text" id="complemento" placeholder="Apto, bloco, referência">
+          </div>
+        </div>
+        <div class="field">
+          <label for="bairro">Bairro</label>
+          <input type="text" id="bairro">
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="cidade">Cidade</label>
+            <input type="text" id="cidade" readonly>
+          </div>
+          <div class="field sm">
+            <label for="uf">Estado</label>
+            <input type="text" id="uf" maxlength="2" readonly>
+          </div>
+        </div>
+      </div>
+
+      <div class="reveal" id="shippingBlock">
+        <p class="section-label">Opções de frete</p>
+        <div id="shippingOptions"></div>
+        <p class="ship-error" id="shipError"></p>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="btnStep1">Continuar</button>
+      </div>
+    </section>
+
+    <!-- ETAPA 2: DADOS PESSOAIS -->
+    <section class="block panel" id="step-2">
+      <h2 class="block-title"><span class="num">2</span>Dados pessoais</h2>
+      <p class="block-sub">Utilizados para emissão da nota fiscal e envio do código de rastreio.</p>
+
+      <div class="field">
+        <label for="email">E-mail</label>
+        <input type="email" id="email" autocomplete="email" inputmode="email" placeholder="seuemail@exemplo.com">
+        <div class="hint"></div>
+      </div>
+      <div class="field">
+        <label for="telefone">Celular</label>
+        <input type="tel" id="telefone" placeholder="(00) 00000-0000" maxlength="15" inputmode="numeric" autocomplete="tel">
+        <div class="hint"></div>
+      </div>
+      <div class="field">
+        <label for="cpf">CPF</label>
+        <div class="input-wrap">
+          <input type="tel" id="cpf" placeholder="000.000.000-00" maxlength="14" inputmode="numeric">
+          <span class="spinner" id="cpfSpinner"></span>
+        </div>
+        <div class="hint"></div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="btnStep2">Continuar para pagamento</button>
+        <button class="btn-back" data-back="1">Voltar</button>
+      </div>
+    </section>
+
+    <!-- ETAPA 3: PAGAMENTO -->
+    <section class="block panel" id="step-3">
+      <div id="pixStart">
+        <h2 class="block-title"><span class="num">3</span>Pagamento</h2>
+        <p class="block-sub">Revise as informações e finalize o pedido.</p>
+
+        <div class="review" id="review"></div>
+
+        <div class="bumps">
+          <p class="bumps-title">Aproveite e leve junto</p>
+          <p class="bumps-sub">Marque para adicionar ao seu pedido. Oferta válida só agora.</p>
+          <div id="bumpOptions"></div>
+        </div>
+
+        <div class="pay-method">
+          <span class="radio"></span>
+          <div class="txt">
+            <b>Pix</b>
+            <small>Aprovação imediata</small>
+          </div>
+        </div>
+        <p class="pay-note">O código Pix será gerado após a confirmação e poderá ser pago pelo aplicativo do seu banco.</p>
+        <div class="pay-error" id="payError"></div>
+
+        <div class="actions">
+          <button class="btn" id="btnPix">Finalizar pedido</button>
+          <button class="btn-back" data-back="2">Voltar</button>
+        </div>
+      </div>
+
+      <div class="pix-result" id="pixResult">
+        <div class="pix-head">
+          <h3>Pedido realizado</h3>
+          <p>Conclua o pagamento via Pix para confirmar sua compra.</p>
+          <div class="amount" id="pixAmount"></div>
+        </div>
+
+        <div class="notice">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+          <div>
+            <p>O pagamento é processado pela <b>VoidPay</b>. Confira os dados do recebedor exibidos pelo seu banco antes de confirmar.</p>
+            <p><b>Cuidado com golpes:</b> confira sempre o valor e o nome do recebedor antes de confirmar. Não realizamos cobranças por telefone, WhatsApp ou e-mail.</p>
+          </div>
+        </div>
+
+        <div class="qr-box" id="qrBox"></div>
+
+        <p class="code-label">Pix Copia e Cola</p>
+        <textarea class="pix-code" id="pixCode" rows="3" readonly></textarea>
+        <button class="btn" id="btnCopy">Copiar código Pix</button>
+        <p class="timer" id="timerWrap">Este código expira em <b id="timer">--:--</b></p>
+
+        <div class="how-to">
+          <h4>Como pagar</h4>
+          <ol>
+            <li>Abra o aplicativo do seu banco e acesse a área Pix.</li>
+            <li>Escolha pagar com QR Code ou Pix Copia e Cola.</li>
+            <li>Confira os dados e confirme o pagamento.</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- Verificação de pagamento -->
+    <section class="block verify-block" id="verifyBlock" style="display:none">
+      <div class="verify">
+        <div class="icon">
+          <div class="ring"></div>
+          <svg class="icon-ok" viewBox="0 0 24 24" fill="none" stroke="#1b8a4b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>
+          <svg class="icon-fail" viewBox="0 0 24 24" fill="none" stroke="#c62828" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+        </div>
+        <div>
+          <h4 id="verifyTitle">Aguardando pagamento</h4>
+          <p id="verifyText">Estamos verificando automaticamente. Assim que o pagamento for identificado, esta tela será atualizada.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- PÁGINA DE OBRIGADO (aparece quando o pagamento é aprovado) -->
+    <div class="obrigado" id="obrigado">
+      <section class="block">
+        <div class="ty-head">
+          <div class="ty-check"><svg viewBox="0 0 24 24" fill="none" stroke="#1b8a4b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></div>
+          <h2 id="tyTitulo">Pagamento aprovado!</h2>
+          <p>Obrigado pela sua compra. Seu pedido já está a caminho.</p>
+          <p class="order-id" id="tyPedido"></p>
+        </div>
+      </section>
+
+      <section class="block countdown">
+        <p class="label" id="tyContagemLabel">Seu kit chega em</p>
+        <div class="big" id="tyDias"></div>
+        <div class="clock" id="tyRelogio">
+          <span><b id="tyH">00</b><small>horas</small></span>
+          <span><b id="tyM">00</b><small>min</small></span>
+          <span><b id="tyS">00</b><small>seg</small></span>
+        </div>
+        <p class="eta">Previsão de entrega: <b id="tyPrevisao"></b></p>
+      </section>
+
+      <section class="block">
+        <div class="summary-title">Status do pedido</div>
+        <ol class="timeline" id="tyTimeline"></ol>
+      </section>
+
+      <section class="block">
+        <div class="summary-title">Endereço de entrega</div>
+        <div class="ty-address" id="tyEndereco"></div>
+        <div id="tyMapa"></div>
+      </section>
+
+      <section class="block">
+        <div class="summary-title">Resumo da compra</div>
+        <div id="tyResumo"></div>
+      </section>
+
+      <div class="notice">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+        <div>
+          <p><b>Acompanhamos cada entrega de perto.</b> O código de rastreio será enviado para <b id="tyEmail"></b>. Guarde esta página: você pode voltar a ela para ver a contagem até a entrega.</p>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <footer class="footer">
+    <div class="seals">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      Ambiente seguro
+    </div>
+    Seus dados são protegidos e utilizados apenas para processar o pedido.
+  </footer>
+
+  <script src="js/qrcode.min.js"></script>
+  <script src="shop-config.js"></script>
+  <script src="js/map-query.js"></script>
+  <script>
+    /* Preços e fretes vêm do arquivo shop-config.js */
+    const CONFIG = window.SHOP_CONFIG;
+    const API = '/api/';
+    const params = new URLSearchParams(location.search);
+    const kitId = CONFIG.kits[params.get('kit')] ? params.get('kit') : '1';
+    const kit = CONFIG.kits[kitId];
+    let freteId = null;
+
+    const brl = v => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const BUMP_MAX = 10;
+    const bumpsSelecionados = new Map(); // id -> quantidade
+    const totalBumps = () => [...bumpsSelecionados].reduce((s, [id, q]) => s + CONFIG.orderBumps[id].preco * q, 0);
+    const subtotal = () => kit.total + totalBumps();
+    const totalAtual = () => subtotal() + (freteId ? CONFIG.fretes[freteId].valor : 0);
+
+    function renderResumo() {
+      const f = freteId && CONFIG.fretes[freteId];
+      const freteTxt = !f ? '<span>A calcular</span>'
+        : f.valor === 0 ? '<span class="free">Grátis</span>' : `<span>${brl(f.valor)}</span>`;
+      const bumpsHtml = [...bumpsSelecionados].map(([id, q]) => {
+        const b = CONFIG.orderBumps[id];
+        return `<div class="summary-item product"><span>${q > 1 ? q + 'x ' : ''}${esc(b.nome)}</span><span>${brl(b.preco * q)}</span></div>`;
+      }).join('');
+      $('summary').innerHTML = `
+        <div class="summary-item product"><span>${esc(kit.nome)}</span><span>${brl(kit.total)}</span></div>
+        ${bumpsHtml}
+        <div class="summary-item"><span>Subtotal</span><span>${brl(subtotal())}</span></div>
+        <div class="summary-item"><span>Frete${f ? ' (' + esc(f.nome) + ')' : ''}</span>${freteTxt}</div>
+        <div class="summary-item total"><span>Total</span><span>${brl(totalAtual())}</span></div>`;
+      const btnPix = $('btnPix');
+      if (btnPix && !btnPix.disabled) btnPix.textContent = 'Finalizar pedido - ' + brl(totalAtual());
+    }
+    renderResumo();
+
+    /* ---------- Banners: troca automática a cada 4s ---------- */
+    (function () {
+      const imgs = [...document.querySelectorAll('#banners img')];
+      const dots = $('bannerDots');
+      if (imgs.length < 2) return;
+      dots.innerHTML = imgs.map((_, i) => `<button type="button" aria-label="Banner ${i + 1}"${i === 0 ? ' class="active"' : ''}></button>`).join('');
+      let atual = 0, timer = null;
+      const mostrar = i => {
+        imgs[atual].classList.remove('active'); dots.children[atual].classList.remove('active');
+        atual = (i + imgs.length) % imgs.length;
+        imgs[atual].classList.add('active'); dots.children[atual].classList.add('active');
+      };
+      const iniciar = () => { clearInterval(timer); timer = setInterval(() => mostrar(atual + 1), 4000); };
+      dots.addEventListener('click', e => {
+        const i = [...dots.children].indexOf(e.target);
+        if (i >= 0) { mostrar(i); iniciar(); }
+      });
+      iniciar();
+    })();
+
+    /* ---------- Order bumps (etapa 3, antes de gerar o Pix) ---------- */
+    $('bumpOptions').innerHTML = Object.entries(CONFIG.orderBumps).map(([id, b]) => `
+      <div class="bump" data-bump="${id}">
+        <label class="bump-main">
+          <input type="checkbox" value="${id}">
+          <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></span>
+          <img src="${esc(b.imagem)}" alt="" loading="lazy">
+          <span class="txt"><b>${esc(b.nome)}</b><small>+ Adicionar ao pedido</small></span>
+        </label>
+        <div class="bump-side">
+          <span class="price">${brl(b.preco)}</span>
+          <div class="qty">
+            <button type="button" data-qty="-1" aria-label="Diminuir quantidade">&minus;</button>
+            <span>1</span>
+            <button type="button" data-qty="1" aria-label="Aumentar quantidade">+</button>
+          </div>
+        </div>
+      </div>`).join('');
+
+    function setBumpQtd(id, q) {
+      q = Math.max(0, Math.min(BUMP_MAX, q));
+      if (q) bumpsSelecionados.set(id, q); else bumpsSelecionados.delete(id);
+      const card = document.querySelector(`.bump[data-bump="${id}"]`);
+      card.classList.toggle('selected', q > 0);
+      card.querySelector('input').checked = q > 0;
+      card.querySelector('.qty span').textContent = q || 1;
+      card.querySelector('[data-qty="1"]').disabled = q >= BUMP_MAX;
+      card.querySelector('.price').textContent = brl(CONFIG.orderBumps[id].preco * (q || 1));
+      renderResumo();
+    }
+
+    $('bumpOptions').addEventListener('change', e => setBumpQtd(e.target.value, e.target.checked ? 1 : 0));
+    $('bumpOptions').addEventListener('click', e => {
+      const btn = e.target.closest('[data-qty]');
+      if (!btn) return;
+      const id = btn.closest('.bump').dataset.bump;
+      setBumpQtd(id, (bumpsSelecionados.get(id) || 0) + +btn.dataset.qty);
+    });
+
+    /* ---------- Navegação entre etapas ---------- */
+    function goTo(n) {
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      $('step-' + n).classList.add('active');
+      document.querySelectorAll('.step').forEach(s => {
+        const i = +s.dataset.step;
+        s.classList.toggle('active', i === n);
+        s.classList.toggle('done', i < n);
+      });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    document.addEventListener('click', e => {
+      const b = e.target.closest('[data-back]');
+      if (b) goTo(+b.dataset.back);
+    });
+
+    /* ---------- Máscaras ---------- */
+    const onlyDigits = v => v.replace(/\D/g, '');
+    function mask(el, fn) { el.addEventListener('input', () => { el.value = fn(onlyDigits(el.value)); }); }
+    mask($('cep'), d => d.slice(0, 8).replace(/^(\d{5})(\d)/, '$1-$2'));
+    mask($('cpf'), d => d.slice(0, 11)
+      .replace(/(\d{3})(\d)/, '$1.$2')
+      .replace(/(\d{3})(\d)/, '$1.$2')
+      .replace(/(\d{3})(\d{1,2})$/, '$1-$2'));
+    mask($('telefone'), d => d.slice(0, 11)
+      .replace(/^(\d{2})(\d)/, '($1) $2')
+      .replace(/(\d{5})(\d{1,4})$/, '$1-$2'));
+
+    function setHint(input, msg, type) {
+      const hint = input.closest('.field').querySelector('.hint');
+      if (hint) { hint.textContent = msg || ''; hint.className = 'hint' + (type ? ' ' + type : ''); }
+      input.classList.toggle('invalid', type === 'err');
+    }
+
+    /* ---------- ETAPA 1: CEP (API ViaCEP - https://viacep.com.br) ---------- */
+    const VIACEP = 'https://viacep.com.br/ws';
+    const cepValido = cep => /^[0-9]{8}$/.test(cep);
+    let ultimoCep = '';
+
+    function preencherEndereco(data) {
+      $('cep').value = data.cep || $('cep').value;
+      $('rua').value = data.logradouro || '';
+      $('bairro').value = data.bairro || '';
+      $('cidade').value = data.localidade || '';
+      $('uf').value = data.uf || '';
+      $('addressFields').classList.add('show');
+      $('shippingBlock').classList.add('show');
+      ['rua', 'bairro'].forEach(id => $(id).classList.remove('invalid'));
+      setHint($('cep'), '');
+      ($('rua').value ? $('numero') : $('rua')).focus();
+    }
+
+    function limparEndereco() {
+      ['rua', 'bairro', 'cidade', 'uf'].forEach(id => $(id).value = '');
+      $('addressFields').classList.remove('show');
+      $('shippingBlock').classList.remove('show');
+    }
+
+    async function buscarCep(cep) {
+      // Valida o formato antes de consultar (evita retorno 400 da API)
+      if (!cepValido(cep) || cep === ultimoCep) return;
+      ultimoCep = cep;
+      $('cepSpinner').classList.add('show');
+      setHint($('cep'), '');
+      try {
+        const res = await fetch(`${VIACEP}/${cep}/json/`);
+        if (!res.ok) throw new Error('formato');
+        const data = await res.json();
+        if (cep !== onlyDigits($('cep').value)) return; // usuário alterou o CEP durante a busca
+        // CEP com formato válido porém inexistente: API retorna { erro: true }
+        if (data.erro) throw new Error('inexistente');
+        preencherEndereco(data);
+      } catch (e) {
+        ultimoCep = '';
+        limparEndereco();
+        setHint($('cep'), e.message === 'inexistente'
+          ? 'CEP não encontrado. Verifique e tente novamente.'
+          : 'Não foi possível consultar o CEP. Tente novamente.', 'err');
+      } finally {
+        $('cepSpinner').classList.remove('show');
+      }
+    }
+    $('cep').addEventListener('input', e => {
+      const d = onlyDigits(e.target.value);
+      if (d.length === 8) buscarCep(d);
+      else { ultimoCep = ''; limparEndereco(); }
+    });
+
+    /* ---------- Pesquisa de CEP por endereço (ViaCEP: /UF/Cidade/Logradouro/json/) ---------- */
+    const UFS = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
+    $('buscaUf').innerHTML = '<option value="">UF</option>' + UFS.map(u => `<option>${u}</option>`).join('');
+
+    $('cepLink').addEventListener('click', e => {
+      e.preventDefault();
+      $('cepSearch').classList.toggle('show');
+      if ($('cepSearch').classList.contains('show')) $('buscaUf').focus();
+    });
+
+    let resultadosBusca = [];
+    $('btnBuscaEndereco').addEventListener('click', async () => {
+      const uf = $('buscaUf').value;
+      const cidade = $('buscaCidade').value.trim();
+      const rua = $('buscaRua').value.trim();
+      const box = $('buscaResultados');
+      if (!uf || cidade.length < 3 || rua.length < 3) {
+        box.innerHTML = '<p class="search-msg err">Informe o estado, a cidade e a rua (mínimo de 3 letras).</p>';
+        return;
+      }
+      const btn = $('btnBuscaEndereco');
+      btn.disabled = true; btn.textContent = 'Buscando...';
+      try {
+        const url = `${VIACEP}/${uf}/${encodeURIComponent(cidade)}/${encodeURIComponent(rua)}/json/`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error();
+        resultadosBusca = await res.json();
+        if (!Array.isArray(resultadosBusca) || !resultadosBusca.length) {
+          box.innerHTML = '<p class="search-msg">Nenhum endereço encontrado. Revise os dados informados.</p>';
+          return;
+        }
+        box.innerHTML = resultadosBusca.map((r, i) => `
+          <button type="button" class="search-item" data-idx="${i}">
+            <b>${esc(r.logradouro)}${r.complemento ? ' (' + esc(r.complemento) + ')' : ''}</b>
+            <span>${esc(r.bairro)} - ${esc(r.localidade)}/${esc(r.uf)} - CEP ${esc(r.cep)}</span>
+          </button>`).join('');
+      } catch {
+        box.innerHTML = '<p class="search-msg err">Não foi possível realizar a busca. Tente novamente.</p>';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Buscar';
+      }
+    });
+
+    $('buscaResultados').addEventListener('click', e => {
+      const item = e.target.closest('.search-item');
+      if (!item) return;
+      const r = resultadosBusca[+item.dataset.idx];
+      ultimoCep = onlyDigits(r.cep);
+      preencherEndereco(r);
+      $('cepSearch').classList.remove('show');
+    });
+
+    /* ---------- Opções de frete ---------- */
+    $('shippingOptions').innerHTML = Object.entries(CONFIG.fretes).map(([id, f]) => `
+      <label class="ship-option" data-frete="${id}">
+        <input type="radio" name="frete" value="${id}">
+        <span class="radio"></span>
+        <span class="txt"><b>${esc(f.nome)}</b><small>${esc(f.prazo)}</small></span>
+        <span class="price${f.valor === 0 ? ' free' : ''}">${f.valor === 0 ? 'Grátis' : brl(f.valor)}</span>
+      </label>`).join('');
+
+    $('shippingOptions').addEventListener('change', e => {
+      freteId = e.target.value;
+      document.querySelectorAll('.ship-option').forEach(o =>
+        o.classList.toggle('selected', o.dataset.frete === freteId));
+      $('shipError').textContent = '';
+      renderResumo();
+    });
+
+    $('btnStep1').addEventListener('click', () => {
+      let ok = true;
+      if (onlyDigits($('cep').value).length !== 8 || !$('addressFields').classList.contains('show')) {
+        setHint($('cep'), 'Informe um CEP válido.', 'err'); ok = false;
+      }
+      ['rua', 'numero', 'bairro'].forEach(id => {
+        const el = $(id);
+        const bad = !el.value.trim();
+        el.classList.toggle('invalid', bad);
+        if (bad) ok = false;
+      });
+      if ($('shippingBlock').classList.contains('show') && !freteId) {
+        $('shipError').textContent = 'Selecione uma opção de frete.'; ok = false;
+      }
+      if (ok) goTo(2);
+    });
+
+    /* ---------- ETAPA 2: Dados pessoais ---------- */
+    function cpfValido(cpf) {
+      cpf = onlyDigits(cpf);
+      if (cpf.length !== 11 || /^(\d)\1+$/.test(cpf)) return false;
+      for (let t = 9; t < 11; t++) {
+        let s = 0;
+        for (let i = 0; i < t; i++) s += cpf[i] * (t + 1 - i);
+        if (((s * 10) % 11) % 10 != cpf[t]) return false;
+      }
+      return true;
+    }
+
+    $('cpf').addEventListener('input', () => {
+      const d = onlyDigits($('cpf').value);
+      setHint($('cpf'), d.length === 11 && !cpfValido(d) ? 'Informe um CPF válido.' : '', d.length === 11 && !cpfValido(d) ? 'err' : '');
+    });
+
+    const validators = {
+      email: v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) || 'Informe um e-mail válido.',
+      telefone: v => onlyDigits(v).length >= 10 || 'Informe um telefone válido.',
+      cpf: v => cpfValido(v) || 'Informe um CPF válido.'
+    };
+    ['email', 'telefone'].forEach(id => {
+      $(id).addEventListener('blur', () => {
+        if (!$(id).value) return;
+        const r = validators[id]($(id).value);
+        setHint($(id), r === true ? '' : r, r === true ? '' : 'err');
+      });
+    });
+
+    $('btnStep2').addEventListener('click', () => {
+      let ok = true;
+      Object.keys(validators).forEach(id => {
+        const r = validators[id]($(id).value);
+        setHint($(id), r === true ? '' : r, r === true ? '' : 'err');
+        if (r !== true) ok = false;
+      });
+      if (!ok) return;
+
+      const comp = $('complemento').value.trim();
+      const f = CONFIG.fretes[freteId];
+      $('review').innerHTML = `
+        <div class="review-item">
+          <div>
+            <h4>Entrega</h4>
+            <p>${esc($('rua').value)}, ${esc($('numero').value)}${comp ? ' - ' + esc(comp) : ''}<br>
+            ${esc($('bairro').value)}, ${esc($('cidade').value)}/${esc($('uf').value)} - CEP ${esc($('cep').value)}<br>
+            ${esc(f.nome)} - ${esc(f.prazo.toLowerCase())}</p>
+          </div>
+          <button data-back="1">Alterar</button>
+        </div>
+        <div class="review-item">
+          <div>
+            <h4>Dados pessoais</h4>
+            <p>${esc($('email').value)}<br>${esc($('telefone').value)}<br>CPF ${esc($('cpf').value)}</p>
+          </div>
+          <button data-back="2">Alterar</button>
+        </div>`;
+      goTo(3);
+    });
+
+    /* ---------- ETAPA 3: PIX ----------
+       O navegador envia os dados para /api/pix (servidor), que recalcula o valor
+       pelo shop-config.js e chama o gateway com as chaves secretas. */
+    function getPedido() {
+      return {
+        kit: kitId,
+        bumps: Object.fromEntries(bumpsSelecionados),
+        frete: freteId,
+        cliente: {
+          email: $('email').value.trim(),
+          cpf: onlyDigits($('cpf').value),
+          telefone: $('telefone').value.trim()
+        },
+        endereco: {
+          cep: onlyDigits($('cep').value),
+          rua: $('rua').value.trim(),
+          numero: $('numero').value.trim(),
+          complemento: $('complemento').value.trim(),
+          bairro: $('bairro').value.trim(),
+          cidade: $('cidade').value.trim(),
+          uf: $('uf').value.trim()
+        }
+      };
+    }
+
+    let transacao = null;
+    let tentativaAtual = null;
+    async function chaveTentativa(pedido) {
+      const bytes = new TextEncoder().encode(JSON.stringify(pedido));
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      const hash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+      if (tentativaAtual?.hash === hash) return tentativaAtual.key;
+      let saved;
+      try { saved = JSON.parse(sessionStorage.getItem('pixAttempt') || 'null'); } catch {}
+      tentativaAtual = saved?.hash === hash ? saved : { hash, key: crypto.randomUUID() };
+      try { sessionStorage.setItem('pixAttempt', JSON.stringify(tentativaAtual)); } catch {}
+      return tentativaAtual.key;
+    }
+
+    $('btnPix').addEventListener('click', async () => {
+      const btn = $('btnPix');
+      btn.disabled = true; btn.textContent = 'Gerando Pix...';
+      $('payError').classList.remove('show');
+      try {
+        const pedido = getPedido();
+        const attemptKey = await chaveTentativa(pedido);
+        const res = await fetch(API + 'pix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': attemptKey },
+          body: JSON.stringify(pedido)
+        });
+        if (!res.headers.get('content-type')?.includes('application/json')) {
+          throw new Error('O serviço de pagamento não está disponível neste endereço. Abra o checkout pelo site da loja.');
+        }
+        let data;
+        try { data = await res.json(); }
+        catch { throw new Error('O serviço de pagamento retornou uma resposta inválida. Entre em contato com a loja antes de tentar novamente.'); }
+        if (!res.ok) throw new Error(data?.message || 'O serviço de pagamento não conseguiu processar o pedido. Entre em contato com a loja.');
+        if (typeof data?.pix?.code !== 'string' || !data.pix.code) throw new Error('O serviço de pagamento não retornou o código Pix. Entre em contato com a loja antes de tentar novamente.');
+        transacao = data;
+        resumoPedido = montarResumoPedido(data);
+        mostrarPix(data);
+      } catch (e) {
+        $('payError').textContent = e.message;
+        $('payError').classList.add('show');
+        btn.disabled = false; btn.textContent = 'Finalizar pedido - ' + brl(totalAtual());
+      }
+    });
+
+    function mostrarPix(data) {
+      $('pixAmount').textContent = brl(data.total);
+      $('pixCode').value = data.pix.code;
+      $('qrBox').innerHTML = '';
+      if (window.QRCode) {
+        new QRCode($('qrBox'), { text: data.pix.code, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+      } else if (data.pix.image) {
+        $('qrBox').innerHTML = `<img src="${esc(data.pix.image)}" alt="QR Code Pix">`;
+      }
+      $('pixStart').style.display = 'none';
+      $('pixResult').classList.add('show');
+      document.querySelectorAll('.step').forEach(s => s.classList.add('done'));
+      $('verifyBlock').style.display = '';
+
+      if (data.pix.expiresAt) iniciarTimer(new Date(data.pix.expiresAt).getTime());
+      else $('timerWrap').textContent = 'Confira o prazo de pagamento no aplicativo do seu banco.';
+      if (data.statusVerificationAvailable) {
+        setVerificacao('pending', 'Aguardando pagamento', 'Assim que o pagamento for confirmado, seu pedido será atualizado automaticamente.');
+        iniciarVerificacao(); verificarPagamento();
+      }
+      else setVerificacao('pending', 'Confirmação pela loja', 'A confirmação automática não está disponível. Após pagar, guarde o comprovante e aguarde a confirmação da loja.');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    let timerId = null;
+    function iniciarTimer(expira) {
+      clearInterval(timerId);
+      const tick = () => {
+        const seg = Math.max(0, Math.round((expira - Date.now()) / 1000));
+        const h = Math.floor(seg / 3600), m = Math.floor(seg % 3600 / 60), s = seg % 60;
+        $('timer').textContent = (h ? h + ':' + String(m).padStart(2, '0') : String(m).padStart(2, '0')) + ':' + String(s).padStart(2, '0');
+        if (seg <= 0) {
+          clearInterval(timerId);
+          $('timerWrap').textContent = 'Este código expirou.';
+          setVerificacao('pending', 'Prazo do Pix encerrado', 'Se você já pagou, aguarde a confirmação. Caso contrário, entre em contato com a loja para conferir o pedido.');
+        }
+      };
+      timerId = setInterval(tick, 1000);
+      tick();
+    }
+
+    /* ---------- Verificação de pagamento (consulta /api/status a cada 5s) ---------- */
+    let pollId = null;
+    function setVerificacao(estado, titulo, texto) {
+      $('verifyBlock').classList.remove('paid', 'failed');
+      if (estado !== 'pending') {
+        $('verifyBlock').classList.add(estado);
+        clearInterval(pollId);
+      }
+      $('verifyTitle').textContent = titulo;
+      $('verifyText').textContent = texto;
+    }
+
+    let verificandoPagamento = false;
+    async function verificarPagamento() {
+      if (!transacao?.statusVerificationAvailable || verificandoPagamento || $('verifyBlock').classList.contains('paid')) return;
+      verificandoPagamento = true;
+      try {
+        const res = await fetch(`${API}status?id=${encodeURIComponent(transacao.transactionId)}&order=${encodeURIComponent(transacao.identifier)}`, { cache: 'no-store', headers: { Authorization: 'Bearer ' + transacao.orderToken } });
+        if (!res.ok) return;
+        const { status } = await res.json();
+        if (status === 'paid') {
+          clearInterval(timerId);
+          setVerificacao('paid', 'Pagamento confirmado', 'Recebemos seu pagamento.');
+          pedidoAprovado();
+        } else if (status === 'failed') {
+          setVerificacao('failed', 'Pagamento não concluído', 'A transação foi cancelada ou expirou. Entre em contato com a loja para conferir o pedido.');
+        }
+      } catch {} finally { verificandoPagamento = false; }
+    }
+
+    function iniciarVerificacao() {
+      clearInterval(pollId);
+      pollId = setInterval(verificarPagamento, 5000);
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && transacao && !$('verifyBlock').classList.contains('paid')) verificarPagamento();
+    });
+
+    $('btnCopy').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText($('pixCode').value); }
+      catch { $('pixCode').select(); document.execCommand('copy'); }
+      $('btnCopy').textContent = 'Código copiado';
+      $('btnCopy').classList.add('btn-outline');
+      setTimeout(() => {
+        $('btnCopy').textContent = 'Copiar código Pix';
+        $('btnCopy').classList.remove('btn-outline');
+      }, 2500);
+    });
+
+    /* ---------- Página de obrigado ---------- */
+    let resumoPedido = null;
+    const DIA = 24 * 60 * 60 * 1000;
+
+    // Foto dos dados no momento em que o Pix é gerado (itens e total vêm do servidor)
+    function montarResumoPedido(data) {
+      const f = CONFIG.fretes[freteId];
+      return {
+        id: data.identifier,
+        nome: '',
+        email: $('email').value.trim(),
+        itens: [{ nome: kit.nome, qtd: 1, valor: kit.total }].concat(
+          [...bumpsSelecionados].map(([id, q]) => ({ nome: CONFIG.orderBumps[id].nome, qtd: q, valor: CONFIG.orderBumps[id].preco * q }))),
+        frete: { nome: f.nome, valor: f.valor, dias: f.dias },
+        total: data.total,
+        endereco: getPedido().endereco
+      };
+    }
+
+    function pedidoAprovado() {
+      if (!resumoPedido) return;
+      // A contagem usa a data do aparelho da cliente no momento da aprovação
+      resumoPedido.aprovadoEm = resumoPedido.aprovadoEm || Date.now();
+      try { localStorage.setItem('pedido_' + resumoPedido.id, JSON.stringify(resumoPedido)); } catch {}
+      // Permite voltar/recarregar a página e continuar vendo a contagem
+      try { history.replaceState(null, '', location.pathname + '?pedido=' + encodeURIComponent(resumoPedido.id)); } catch {}
+      mostrarObrigado(resumoPedido);
+    }
+
+    const fmtData = ts => new Date(ts).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+    const fmtHora = ts => new Date(ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const dois = n => String(n).padStart(2, '0');
+
+    function mostrarObrigado(p) {
+      document.body.classList.add('pedido-pago');
+      const e = p.endereco;
+      const primeiroNome = (p.nome || '').trim().split(/\s+/)[0];
+      $('tyTitulo').textContent = primeiroNome ? `Pagamento aprovado, ${primeiroNome}!` : 'Pagamento aprovado!';
+      $('tyPedido').textContent = 'Pedido ' + p.id;
+      $('tyEmail').textContent = p.email;
+
+      // Previsão: meia-noite do dia da aprovação + prazo do frete (ex.: 7 dias -> "faltam 6 dias e X horas")
+      const inicio = new Date(p.aprovadoEm); inicio.setHours(0, 0, 0, 0);
+      const previsao = inicio.getTime() + p.frete.dias * DIA;
+      $('tyPrevisao').textContent = fmtData(previsao);
+
+      $('tyTimeline').innerHTML = [
+        ['done', 'Pagamento aprovado', fmtHora(p.aprovadoEm)],
+        ['done', 'Pedido separado e embalado', 'Seu kit foi preparado com cuidado'],
+        ['current', 'Em trânsito', `A caminho de ${e.cidade}/${String(e.uf).toUpperCase()}`],
+        ['', 'Entregue', 'Previsão: ' + fmtData(previsao)]
+      ].map(([cls, t, sub]) => `
+        <li class="${cls}">
+          <span class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></span>
+          <div><b>${esc(t)}</b><small>${esc(sub)}</small></div>
+        </li>`).join('');
+
+      mostrarEnderecoEntrega($('tyEndereco'), $('tyMapa'), p.nome, e);
+
+      $('tyResumo').innerHTML = p.itens.map(i =>
+        `<div class="summary-item product"><span>${i.qtd > 1 ? i.qtd + 'x ' : ''}${esc(i.nome)}</span><span>${brl(i.valor)}</span></div>`).join('') + `
+        <div class="summary-item"><span>Frete (${esc(p.frete.nome)})</span>${p.frete.valor === 0 ? '<span class="free">Grátis</span>' : '<span>' + brl(p.frete.valor) + '</span>'}</div>
+        <div class="summary-item total"><span>Total pago</span><span>${brl(p.total)}</span></div>`;
+
+      const tick = () => {
+        const ms = previsao - Date.now();
+        if (ms <= 0) {
+          $('tyContagemLabel').textContent = 'Previsão de entrega';
+          $('tyDias').textContent = 'Seu kit chega hoje';
+          $('tyRelogio').style.display = 'none';
+          clearInterval(contagemId);
+          return;
+        }
+        const d = Math.floor(ms / DIA), h = Math.floor(ms % DIA / 3600000), m = Math.floor(ms % 3600000 / 60000), s = Math.floor(ms % 60000 / 1000);
+        $('tyContagemLabel').textContent = d ? 'Faltam para o seu kit chegar' : 'Seu kit chega hoje! Faltam';
+        $('tyDias').textContent = d ? `${d} ${d === 1 ? 'dia' : 'dias'}` : 'Menos de 1 dia';
+        $('tyH').textContent = dois(h); $('tyM').textContent = dois(m); $('tyS').textContent = dois(s);
+      };
+      clearInterval(contagemId);
+      tick();
+      contagemId = setInterval(tick, 1000);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    let contagemId = null;
+
+    /* ---------- Mapa do endereço de entrega ----------
+       ATENÇÃO: maps.google.com/maps?...&output=embed é um formato NÃO OFICIAL do Google (sem API key),
+       sem garantia de que continue funcionando no longo prazo. A alternativa oficial é a Maps Embed API:
+       https://www.google.com/maps/embed/v1/place?key=SUA_CHAVE&q=...
+       O endereço vem do estado do pedido salvo neste aparelho (nunca da URL da página) e não é
+       registrado no console nem enviado para analytics. */
+    const MAPA_ALTURA = 320;
+
+    function mostrarEnderecoEntrega(textoEl, mapaEl, nome, endereco) {
+      const e = MapQuery.normalizarEndereco(endereco);
+      const linha = (...partes) => partes.filter(Boolean).join(', ');
+
+      // Texto do endereço (com o complemento), montado com textContent
+      textoEl.textContent = '';
+      const add = (txt, negrito) => {
+        if (!txt) return;
+        const el = document.createElement(negrito ? 'b' : 'div');
+        el.textContent = txt;
+        if (negrito) el.style.display = 'block';
+        textoEl.appendChild(el);
+      };
+      add(nome, true);
+      add([linha(e.rua, e.numero || 'S/N'), e.complemento].filter(Boolean).join(' - '));
+      add([linha(e.bairro, [e.cidade, e.uf].filter(Boolean).join('/')), e.cep && 'CEP ' + e.cep].filter(Boolean).join(' - '));
+
+      const query = MapQuery.buildMapQuery(endereco);
+      mapaEl.textContent = '';
+
+      if (MapQuery.enderecoCompleto(endereco)) {
+        const box = document.createElement('div');
+        box.className = 'map-embed loading';
+        box.style.height = MAPA_ALTURA + 'px';
+        const iframe = document.createElement('iframe');
+        iframe.title = 'Mapa do endereço de entrega';
+        iframe.width = '100%';
+        iframe.height = String(MAPA_ALTURA);
+        iframe.style.border = '0';
+        iframe.loading = 'lazy';
+        iframe.allowFullscreen = true;
+        iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+        iframe.addEventListener('load', () => box.classList.remove('loading'));
+        iframe.src = `https://maps.google.com/maps?q=${query}&output=embed&hl=pt-BR&z=16`;
+        box.appendChild(iframe);
+        mapaEl.appendChild(box);
+      }
+
+      // Link oficial, sempre visível (inclusive quando o endereço está incompleto)
+      const link = document.createElement('a');
+      link.className = 'map-link';
+      link.href = 'https://www.google.com/maps/search/?api=1&query=' + query;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = 'Abrir no Google Maps';
+      mapaEl.appendChild(link);
+    }
+
+    // Reabrindo a página de um pedido já aprovado (checkout.html?pedido=ID) neste aparelho
+    (function () {
+      const id = params.get('pedido');
+      if (!id) return;
+      let p = null;
+      try { p = JSON.parse(localStorage.getItem('pedido_' + id)); } catch {}
+      if (p && p.aprovadoEm) mostrarObrigado(p);
+    })();
+  </script>
+</body>
+</html>
