@@ -32,8 +32,11 @@ body{margin:0;background:#fff}
 .wp-page .answers{display:flex;flex-direction:column;gap:11px}
 .wp-page .answers button{font-family:inherit;text-align:left;cursor:pointer;font-size:15px;font-weight:600;color:var(--ink);background:#fff;border:1.5px solid rgba(255,0,128,.22);border-radius:14px;padding:15px 16px;display:flex;align-items:center;gap:12px;transition:.22s ease}
 .wp-page .answers button:before{content:"";flex:0 0 18px;height:18px;border-radius:50%;border:2px solid var(--pink-soft);transition:.22s ease}
-.wp-page .answers button:hover{border-color:var(--pink);background:#fff5fa}
-.wp-page .answers button:hover:before{border-color:var(--pink);background:var(--pink)}
+/* Hover só com mouse (no toque ele fica preso no botão da pergunta seguinte) e só depois de o mouse se mover na pergunta nova */
+@media (hover:hover) and (pointer:fine){
+.wp-page .answers:not(.fresh) button:hover{border-color:var(--pink);background:#fff5fa}
+.wp-page .answers:not(.fresh) button:hover:before{border-color:var(--pink);background:var(--pink)}
+}
 .wp-page .answers button:disabled{opacity:.55;cursor:not-allowed}
 .wp-page .trust{margin-top:20px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:11px;color:var(--muted);font-weight:600;text-align:center}
 .wp-page .trust svg{width:13px;height:13px;fill:var(--pink);flex:0 0 13px}
@@ -128,6 +131,13 @@ function render(){
   quiz.innerHTML='<div class="question"><div class="qhead">Pergunta '+(i+1)+' de '+QUESTIONS.length+'</div><h1>'+q.q+'</h1><div class="answers">'
     +q.a.map(function(t){return '<button type="button">'+t+'</button>';}).join('')+'</div></div>';
   Array.prototype.forEach.call(quiz.querySelectorAll('button'),function(b){b.onclick=answer;});
+  if(i>0){
+    // O cursor parado sobre a nova alternativa não deve parecer uma resposta já marcada
+    var answers=quiz.querySelector('.answers');
+    answers.classList.add('fresh');
+    var moved=function(e){if(!e.movementX&&!e.movementY)return;answers.classList.remove('fresh');document.removeEventListener('pointermove',moved);};
+    document.addEventListener('pointermove',moved);
+  }
 }
 function answer(){
   if(busy)return;busy=true;
