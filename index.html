@@ -37,6 +37,8 @@ body{margin:0;background:#fff}
 .wp-page .answers:not(.fresh) button:hover{border-color:var(--pink);background:#fff5fa}
 .wp-page .answers:not(.fresh) button:hover:before{border-color:var(--pink);background:var(--pink)}
 }
+.wp-page .answers button.picked{border-color:var(--pink);background:#fff5fa}
+.wp-page .answers button.picked:before{border-color:var(--pink);background:var(--pink)}
 .wp-page .answers button:disabled{opacity:.55;cursor:not-allowed}
 .wp-page .trust{margin-top:20px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:11px;color:var(--muted);font-weight:600;text-align:center}
 .wp-page .trust svg{width:13px;height:13px;fill:var(--pink);flex:0 0 13px}
@@ -141,7 +143,9 @@ function render(){
 }
 function answer(){
   if(busy)return;busy=true;
-  document.getElementById('loading').style.display='flex';
+  // A resposta escolhida fica rosa; os botões da próxima pergunta são novos e começam sem marcação
+  this.classList.add('picked');
+  setTimeout(function(){document.getElementById('loading').style.display='flex';},350);
   setTimeout(function(){busy=false;document.getElementById('loading').style.display='none';i++;render();window.scrollTo({top:0,behavior:'smooth'});},1000);
 }
 render();
