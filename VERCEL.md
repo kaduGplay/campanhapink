@@ -29,6 +29,8 @@ Cadastre as variáveis abaixo em **Project Settings → Environment Variables**:
 | `VOIDPAY_SECRET_KEY` | A chave privada já usada no `.env` local |
 | `GATEWAY_WEBHOOK_TOKEN` | O mesmo token interno fixo já salvo no `.env` |
 | `PUBLIC_BASE_URL` | URL pública HTTPS estável do site, sem caminho, por exemplo `https://seu-projeto.vercel.app` |
+| `META_ACCESS_TOKEN` | Token da API de Conversões da Meta (Gerenciador de Eventos). Sensível, somente produção |
+| `META_TEST_EVENT_CODE` | Opcional e temporário: código de "Testar eventos". Remova após validar |
 
 Integrações antigas que disponibilizam `KV_REST_API_URL` e `KV_REST_API_TOKEN` também são aceitas. Use o token de escrita, não um token somente de leitura.
 
@@ -40,16 +42,18 @@ Não envie `.env` ou `.data` para a Vercel. Eles estão bloqueados em `.gitignor
 
 Faça o deploy. Após conhecer a URL definitiva, confira `PUBLIC_BASE_URL` e faça um **Redeploy** caso tenha alterado as variáveis.
 
-No painel VoidPay, cadastre:
+Os avisos da VoidPay são automáticos: cada Pix é criado com `callbackUrl=https://SEU-DOMINIO/api/webhooks/voidpay`, montado a partir de `PUBLIC_BASE_URL`. Não é preciso cadastrar nada no painel. O servidor confirma cada aviso consultando a VoidPay com as chaves da loja. Se `PUBLIC_BASE_URL` mudar (por exemplo, domínio próprio), atualize a variável e faça Redeploy; as cobranças antigas continuam avisando o endereço anterior.
+
+Opcionalmente, as rotas do painel continuam aceitas, com o token interno em `payload.token`:
 
 | Evento | URL |
 | --- | --- |
 | `TRANSACTION_CREATED` | `https://SEU-DOMINIO/api/webhooks/voidpay/created` |
 | `TRANSACTION_PAID` | `https://SEU-DOMINIO/api/webhooks/voidpay/paid` |
 
-A VoidPay precisa enviar o token interno em `payload.token`, conforme a integração existente. O token permanece o mesmo em todas as vendas e em todos os deploys. Garanta que a proteção de acesso da Vercel não exija login para essas URLs de produção; o receptor já autentica cada notificação pelo token.
+Garanta que a proteção de acesso da Vercel não exija login para as URLs de produção.
 
-As funções acessam a VoidPay diretamente, somente pelo servidor. Sem Redis configurado, a API retorna uma mensagem de indisponibilidade **antes** de solicitar a cobrança. Não existe fallback para memória ou `/tmp` na Vercel.
+As funções acessam a VoidPay e a Meta diretamente, somente pelo servidor. Sem Redis configurado, a API retorna uma mensagem de indisponibilidade **antes** de solicitar a cobrança. Não existe fallback para memória ou `/tmp` na Vercel.
 
 ## 4. Verificação
 

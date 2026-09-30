@@ -2,8 +2,10 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createPayments, PaymentError } = require('./lib/payments');
-const { createWebhooks, WebhookError } = require('./lib/voidpay-webhooks');
+const { createWebhooks, WebhookError, publicOrigin } = require('./lib/voidpay-webhooks');
 const { configuredStore, StorageError } = require('./lib/storage');
+const { createMeta } = require('./lib/meta');
+const CONFIG = require('./shop-config');
 if (!process.env.VERCEL) {
   try { process.loadEnvFile(path.join(__dirname, '.env')); }
   catch (e) { if (e.code !== 'ENOENT') throw e; }
@@ -17,7 +19,12 @@ const webhookRoutes = {
   '/api/webhooks/voidpay/created': 'TRANSACTION_CREATED',
   '/api/webhooks/voidpay/paid': 'TRANSACTION_PAID'
 };
-const payments = createPayments({ webhooks, store: orderStore, publicKey: process.env.VOIDPAY_PUBLIC_KEY, secretKey: process.env.VOIDPAY_SECRET_KEY });
+const siteOrigin = publicOrigin(process.env.PUBLIC_BASE_URL);
+const meta = createMeta({ token: process.env.META_ACCESS_TOKEN, testEventCode: process.env.META_TEST_EVENT_CODE, origin: siteOrigin });
+const payments = createPayments({
+  webhooks, store: orderStore, publicKey: process.env.VOIDPAY_PUBLIC_KEY, secretKey: process.env.VOIDPAY_SECRET_KEY,
+  callbackUrl: siteOrigin ? siteOrigin + '/api/webhooks/voidpay' : '', confirmWithGateway: true, onPaid: record => meta.purchase(record)
+});
 function json(res, status, data) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(data));
@@ -41,7 +48,11 @@ async function body(req, limit = 16384) {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
   catch { throw new PaymentError(400, 'JSON inválido.'); }
 }
-function createHandler({ paymentService = payments, webhookService = webhooks, apiOnly = false } = {}) {
+function sameOrigin(req) {
+  const origin = req.headers.origin;
+  if ((origin && new URL(origin).host !== req.headers.host) || req.headers['sec-fetch-site'] === 'cross-site') throw new PaymentError(403, 'Origem não permitida.');
+}
+function createHandler({ paymentService = payments, webhookService = webhooks, metaService = meta, apiOnly = false } = {}) {
   return async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
@@ -56,11 +67,22 @@ function createHandler({ paymentService = payments, webhookService = webhooks, a
           console.info(JSON.stringify({ scope: 'voidpay-webhook', event: webhookRoutes[pathname], outcome: result.duplicate ? 'duplicate' : 'accepted' }));
           return json(res, 200, result);
         }
+        if (pathname === '/api/webhooks/voidpay') {
+          if (req.method !== 'POST') return json(res, 405, { message: 'Método não permitido.' });
+          const result = await paymentService.notify(await body(req, 131072));
+          console.info(JSON.stringify({ scope: 'voidpay-callback', outcome: result.status }));
+          return json(res, 200, result);
+        }
         if (pathname === '/api/cpf' && req.method === 'GET') return json(res, 200, { nome: null });
         if (pathname === '/api/pix' && req.method === 'POST') {
-          const origin = req.headers.origin;
-          if ((origin && new URL(origin).host !== req.headers.host) || req.headers['sec-fetch-site'] === 'cross-site') throw new PaymentError(403, 'Origem não permitida.');
-          return json(res, 200, await paymentService.generate(await body(req), req.headers['idempotency-key']));
+          sameOrigin(req);
+          return json(res, 200, await paymentService.generate(await body(req), req.headers['idempotency-key'], { attribution: metaService.attribution(req) }));
+        }
+        if (pathname === '/api/meta/event' && req.method === 'POST') {
+          sameOrigin(req);
+          const data = await body(req, 2048);
+          if (data?.event !== 'AddToCart' || !Object.hasOwn(CONFIG.kits, data.kit) || !/^atc:[a-zA-Z0-9-]{16,80}$/.test(data.eventId || '')) throw new PaymentError(400, 'Evento inválido.');
+          return json(res, 200, { sent: await metaService.addToCart(data.kit, data.eventId, metaService.attribution(req)) });
         }
         if (pathname === '/api/status' && req.method === 'GET') {
           return json(res, 200, await paymentService.status(url.searchParams.get('order'), url.searchParams.get('id'), req.headers.authorization?.replace(/^Bearer /, '')));
@@ -69,6 +91,7 @@ function createHandler({ paymentService = payments, webhookService = webhooks, a
       } catch (e) {
         const known = e instanceof PaymentError || e instanceof WebhookError || e instanceof StorageError;
         if (Object.hasOwn(webhookRoutes, pathname)) console.warn(JSON.stringify({ scope: 'voidpay-webhook', event: webhookRoutes[pathname], outcome: 'rejected', status: known ? e.status : 500 }));
+        if (pathname === '/api/webhooks/voidpay') console.warn(JSON.stringify({ scope: 'voidpay-callback', outcome: 'rejected', status: known ? e.status : 500 }));
         return json(res, known ? e.status : 500, { message: known ? e.message : 'Não foi possível processar o pedido.', ...(e instanceof PaymentError && e.code ? { code: e.code } : {}) });
       }
     }

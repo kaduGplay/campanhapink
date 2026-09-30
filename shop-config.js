@@ -9,6 +9,9 @@
     produtoId: 'kit5-body-splash',
     produtoNome: 'Kit 5 Body Splashes Edição Limitada',
 
+    // Pixel da Meta (público). O token da API de Conversões fica só no servidor (META_ACCESS_TOKEN).
+    metaPixelId: '1614475887126253',
+
     // checkout.html?kit=1  /  checkout.html?kit=2
     kits: {
       '1': { nome: 'Kit 5 Body Splashes', quantidade: 1, total: 34.90 },

@@ -24,7 +24,23 @@ O checkout precisa do servidor Node para gerar o Pix. Live Server/prévias está
 - `/parte%201/index.html`: oferta do kit e seleção de quantidade.
 - `/checkout.html?kit=1` ou `?kit=2`: endereço, dados pessoais e pagamento.
 
-O site está sem UTMify e sem pixels Meta/Facebook. Também foram removidos os identificadores antigos, o envio/leitura de dados de atribuição, o repasse de parâmetros de anúncios e os interceptadores de clique/fetch usados pelos rastreadores. O link `/loja` retorna à oferta local.
+O site está sem UTMify. Os identificadores antigos, o repasse de parâmetros de anúncios e os interceptadores de clique/fetch dos rastreadores anteriores foram removidos; o único rastreamento é o Pixel da Meta descrito abaixo. O link `/loja` retorna à oferta local.
+
+## Pixel e API de Conversões da Meta
+
+Pixel `1614475887126253`, definido em `shop-config.js` e carregado por `js/meta-pixel.js` nas três páginas. Prévias locais (`localhost`, arquivo) não enviam eventos.
+
+| Evento | Quando | Navegador | Servidor |
+| --- | --- | --- | --- |
+| `PageView` | Toda página | Sim | Não |
+| `AddToCart` | Ao chegar no checkout, uma vez por visita e kit | Sim | `POST /api/meta/event` |
+| `Purchase` | Pagamento confirmado | Sim, na tela de aprovado | Sim, na confirmação do pagamento |
+
+Navegador e servidor usam o mesmo ID de evento (`atc:<uuid>` e `purchase:<pedido>`), e a Meta deduplica. O `Purchase` do servidor é enviado mesmo que a cliente feche a página antes da aprovação, desde que o aviso da VoidPay chegue. Valores e itens vêm do pedido recalculado no servidor, em BRL.
+
+O servidor envia e-mail, telefone, CEP, cidade, estado e país somente em SHA-256, além de IP, user agent e cookies `_fbp`/`_fbc` capturados na requisição da própria cliente ao gerar o Pix. CPF, nome e endereço completo não são enviados. O token fica em `META_ACCESS_TOKEN` apenas no servidor. Sem token, o Pixel do navegador continua funcionando. Falhas da Meta não bloqueiam checkout nem pagamento; um `Purchase` que falhar é reenviado na próxima conferência do pedido.
+
+Para validar no Gerenciador de Eventos, configure temporariamente `META_TEST_EVENT_CODE` com o código de "Testar eventos" e remova-o depois. Enquanto estiver configurado, os eventos do servidor não contam como conversões reais.
 
 ## Integração VoidPay
 
@@ -44,12 +60,20 @@ Reinicie `npm start` após configurar as chaves. Elas ficam exclusivamente no se
 - O QR Code é renderizado localmente a partir de `pix.code`. Não é inventado um prazo quando `expiresAt` não é retornado.
 - `Idempotency-Key` é preservado na sessão do checkout. O servidor reserva a tentativa no armazenamento antes da chamada e reutiliza a resposta em repetições. Falhas ambíguas de rede exigem conferência no painel antes de outra cobrança; não há reenvio automático ao gateway.
 - `amount` é o total em reais. O frete pago é representado como item de serviço em `products`, de modo que a soma dos itens corresponde a `amount`. O campo opcional `shippingFee` foi omitido porque a documentação fornecida não inclui a fórmula mencionada no link de cálculo do total.
-- `GET /api/status` exige identificador do pedido e token Bearer; combina a resposta da criação com os webhooks autenticados já gravados e retorna `pending` ou `paid`. Não consulta o gateway.
+- `GET /api/status` exige identificador do pedido e token Bearer; combina a resposta da criação, os webhooks autenticados já gravados e, se ainda pendente, a consulta autenticada à VoidPay (no máximo a cada 15 segundos). Retorna `pending` ou `paid`.
 - `.env`, `.data`, testes e código do servidor não são acessíveis por HTTP.
 
-### Webhooks de transação criada e paga
+### Aviso automático por cobrança (`callbackUrl`)
 
-Configure no painel VoidPay os dois eventos, usando o domínio público desta instalação:
+Com `PUBLIC_BASE_URL` configurada em HTTPS, cada Pix é criado com `callbackUrl=${PUBLIC_BASE_URL}/api/webhooks/voidpay`. A VoidPay registra esse endereço na própria transação e envia para ele os avisos de gerada e paga. Não é preciso cadastrar nada no painel.
+
+O corpo do aviso apenas indica qual pedido conferir, pelo identificador ou pelo ID da transação. O status nunca é aceito do corpo: o servidor consulta `GET /api/v1/gateway/transactions?id=` com as chaves da loja e só aprova com `COMPLETED`, mesma transação, mesmo pedido, valor em centavos, BRL e PIX. Se o aviso diz pago e a consulta ainda não confirma, ou se a consulta falha, a rota responde 503 para a VoidPay reenviar.
+
+`GET /api/status` usa a mesma consulta como reserva, no máximo a cada 15 segundos por pedido e instância, enquanto o checkout está aberto. A confirmação dispara o `Purchase` da API de Conversões uma única vez por pedido.
+
+### Webhooks de transação criada e paga (painel, opcional)
+
+As rotas abaixo continuam disponíveis caso você prefira também cadastrar os eventos no painel VoidPay, usando o domínio público desta instalação:
 
 | Evento | Método | URL |
 | --- | --- | --- |
@@ -73,13 +97,13 @@ A geração interna não registra o token na VoidPay. O mesmo valor precisa esta
 - As notificações são gravadas em Redis na Vercel ou em `.data/webhooks` no modo local, com criação atômica e identificação por evento + transação. O modo local também sincroniza os registros em disco. HTTP 200 só é retornado após gravação durável ou reconhecimento de uma repetição já gravada. Repetições conflitantes retornam 409.
 - Os registros contêm somente os dados de transação necessários à conciliação. Tokens, CPF, telefone, e-mail e payload bruto não são gravados nesses registros nem nos logs. Logs indicam apenas evento, resultado e código HTTP de erro.
 - A confirmação exige o mesmo ID de transação retornado na criação, valor em centavos, moeda BRL, método PIX e, quando informado, identificador do pedido. Um evento criado não aprova a compra. Um evento de criação atrasado não reverte um pagamento.
-- A conciliação é feita ao consultar o pedido, a partir do registro durável de pagamento. Isso também cobre um webhook recebido antes da resposta da geração do Pix. Não existe chamada de saída para confirmar eventos.
+- A conciliação é feita ao consultar o pedido, a partir do registro durável de pagamento. Isso também cobre um webhook recebido antes da resposta da geração do Pix. Essas duas rotas do painel não fazem chamada de saída; a consulta autenticada é usada pelo aviso automático e pelo status.
 - O checkout consulta o servidor a cada cinco segundos e abre a tela de pagamento aprovado após a confirmação. A consulta continua após o prazo visual do QR Code para permitir a chegada tardia de uma notificação de pagamento.
 - Este receptor cobre apenas criação e pagamento. Eventos de estorno, chargeback e cancelamento não são aceitos nessas rotas.
 
 ### Estado da configuração
 
-As chaves da API já estão configuradas localmente. O token interno também já está configurado. Ainda faltam a URL pública da instalação e o cadastro das duas URLs com o mesmo token no provedor para receber notificações reais. Sem token, os receptores retornam 503; sem token e URL HTTPS configurados, o checkout não promete confirmação automática. Uma cobrança de teste de R$ 34,90 foi gerada com sucesso, conforme o registro de diagnóstico abaixo. Nenhum pagamento foi efetuado; a confirmação real por webhook ainda não foi homologada.
+As chaves da API e o token interno estão configurados localmente e na Vercel. Em produção, `PUBLIC_BASE_URL` ativa o aviso automático por cobrança, e a consulta autenticada confirma pagamentos mesmo sem webhooks do painel. Sem token interno, as rotas do painel retornam 503. Uma cobrança de teste de R$ 34,90 foi gerada com sucesso, conforme o registro de diagnóstico abaixo. Nenhum pagamento foi efetuado; a confirmação real por webhook ainda não foi homologada.
 
 O checkout não solicita nome nem consulta titularidade do CPF; envia o nome padrão `Cliente` definido no servidor. O preenchimento por CEP usa ViaCEP e exige internet.
 

@@ -39,10 +39,17 @@ test('build publica somente recursos permitidos, preserva URLs e não inclui dad
   const root = path.resolve(__dirname, '../dist');
   const files = await fs.readdir(root, { recursive: true });
   for (const file of files) assert.equal(/(^|\/)(\.env|\.data|lib|tests|server\.js|package\.json|api)(\/|$|\.)/.test(file), false, file);
-  for (const file of ['index.html', 'checkout.html', 'parte 1/index.html', 'shop-config.js', 'js/qrcode.min.js', 'parte 1/images/kit.jpg']) assert.ok(files.includes(file));
+  for (const file of ['index.html', 'checkout.html', 'parte 1/index.html', 'shop-config.js', 'js/qrcode.min.js', 'js/meta-pixel.js', 'parte 1/images/kit.jpg']) assert.ok(files.includes(file));
   const html = await fs.readFile(path.join(root, 'checkout.html'), 'utf8');
   assert.ok(html.indexOf('<meta name="pink-runtime" content="node">') < html.indexOf('location.replace('));
-  assert.equal(/utmify|fbevents|fbq\(/i.test(html), false);
+  assert.equal(/utmify/i.test(html), false);
+  // Pixel carregado depois da configuração, em todas as páginas; o token da API de Conversões nunca vai ao navegador.
+  for (const [page, prefix] of [['index.html', ''], ['checkout.html', ''], ['parte 1/index.html', '../']]) {
+    const content = await fs.readFile(path.join(root, page), 'utf8');
+    assert.ok(content.indexOf(`src="${prefix}shop-config.js"`) < content.indexOf(`src="${prefix}js/meta-pixel.js"`), page);
+    assert.ok(content.includes(`src="${prefix}shop-config.js"`), page);
+  }
+  for (const file of files.filter(f => /\.(html|js)$/.test(f))) assert.equal(/EAA[A-Za-z0-9]{20}/.test(await fs.readFile(path.join(root, file), 'utf8')), false, file);
   const config = JSON.parse(await fs.readFile(path.resolve(__dirname, '../vercel.json'), 'utf8'));
   assert.equal(config.outputDirectory, 'dist'); assert.equal(config.functions['api/index.js'].maxDuration, 60);
 });

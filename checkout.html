@@ -700,6 +700,7 @@
 
   <script src="js/qrcode.min.js"></script>
   <script src="shop-config.js"></script>
+  <script src="js/meta-pixel.js"></script>
   <script src="js/map-query.js"></script>
   <script>
     /* Preços e fretes vêm do arquivo shop-config.js */
@@ -1210,8 +1211,20 @@
       };
     }
 
+    // Mesmo ID do Purchase enviado pelo servidor (API de Conversões) para a Meta deduplicar
+    function metaPurchase(p) {
+      const kitItem = `${CONFIG.produtoId}-${kitId}`;
+      const contents = [{ id: kitItem, quantity: 1, item_price: kit.total }].concat(
+        [...bumpsSelecionados].map(([id, q]) => ({ id, quantity: q, item_price: CONFIG.orderBumps[id].preco })));
+      window.PinkMeta?.track('Purchase', {
+        value: p.total, currency: 'BRL', content_type: 'product', content_ids: contents.map(c => c.id), contents,
+        num_items: contents.reduce((s, c) => s + c.quantity, 0), order_id: p.id
+      }, 'purchase:' + p.id);
+    }
+
     function pedidoAprovado() {
       if (!resumoPedido) return;
+      metaPurchase(resumoPedido);
       // A contagem usa a data do aparelho da cliente no momento da aprovação
       resumoPedido.aprovadoEm = resumoPedido.aprovadoEm || Date.now();
       try { localStorage.setItem('pedido_' + resumoPedido.id, JSON.stringify(resumoPedido)); } catch {}
@@ -1339,6 +1352,22 @@
       let p = null;
       try { p = JSON.parse(localStorage.getItem('pedido_' + id)); } catch {}
       if (p && p.aprovadoEm) mostrarObrigado(p);
+    })();
+
+    // Meta: chegar ao checkout conta como AddToCart, uma vez por visita e kit
+    (function () {
+      if (params.get('pedido')) return;
+      let eventId = null;
+      try { eventId = sessionStorage.getItem('atc:' + kitId); } catch {}
+      if (!eventId) {
+        eventId = 'atc:' + crypto.randomUUID();
+        try { sessionStorage.setItem('atc:' + kitId, eventId); } catch {}
+      }
+      const id = `${CONFIG.produtoId}-${kitId}`;
+      window.PinkMeta?.track('AddToCart', {
+        value: kit.total, currency: 'BRL', content_type: 'product', content_ids: [id],
+        contents: [{ id, quantity: 1, item_price: kit.total }], num_items: 1
+      }, eventId, { event: 'AddToCart', eventId, kit: kitId });
     })();
   </script>
 </body>
